@@ -1,0 +1,8 @@
+node_modules/
+.env
+data/*
+!data/.gitkeep
+!data/klines-cache/
+!data/klines-cache/.gitkeep
+npm-debug.log*
+.DS_Store
