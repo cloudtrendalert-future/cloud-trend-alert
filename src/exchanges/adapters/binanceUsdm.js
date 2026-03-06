@@ -33,10 +33,30 @@ export class BinanceUsdmAdapter {
   constructor({ timeoutMs = 12000 } = {}) {
     this.id = 'binance';
     this.timeoutMs = timeoutMs;
+    this.universeReady = true;
+    this.supportedSymbols = new Set();
+  }
+
+  canTradeSymbol(unifiedSymbol) {
+    const normalized = normalizeUnifiedSymbol(unifiedSymbol);
+    if (!normalized || !isUsdtSymbol(normalized)) {
+      return false;
+    }
+
+    if (!this.supportedSymbols.size) {
+      return true;
+    }
+
+    return this.supportedSymbols.has(normalized);
   }
 
   async fetchTopSymbols(limit = 100) {
     const payload = await fetchJson(`${BASE_URL}/fapi/v1/ticker/24hr`, this.timeoutMs);
+    this.supportedSymbols = new Set(payload
+      .map((row) => normalizeUnifiedSymbol(row.symbol))
+      .filter((symbol) => isUsdtSymbol(symbol)));
+    this.universeReady = true;
+
     return payload
       .map((row) => {
         const unifiedSymbol = normalizeUnifiedSymbol(row.symbol);

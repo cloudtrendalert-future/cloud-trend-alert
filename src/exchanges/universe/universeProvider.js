@@ -11,10 +11,17 @@ export class UniverseProvider {
     const rows = [];
 
     results.forEach((result, index) => {
+      const adapter = this.adapters[index];
       if (result.status === 'fulfilled') {
+        if (adapter) {
+          adapter.universeReady = true;
+        }
         rows.push(...result.value);
       } else {
-        const adapterId = this.adapters[index]?.id || `adapter_${index}`;
+        if (adapter) {
+          adapter.universeReady = false;
+        }
+        const adapterId = adapter?.id || `adapter_${index}`;
         this.logger.warn?.(`[universe] ${adapterId} fetchTopSymbols failed: ${result.reason?.message || result.reason}`);
       }
     });

@@ -25,6 +25,14 @@ export class KlinesService {
 
     const data = await this.limiter.run(async () => {
       for (const adapter of this.adapters) {
+        if (adapter.universeReady === false) {
+          continue;
+        }
+
+        if (typeof adapter.canTradeSymbol === 'function' && !adapter.canTradeSymbol(unifiedSymbol)) {
+          continue;
+        }
+
         try {
           const rows = await adapter.fetchKlines(unifiedSymbol, tf, limit);
           if (Array.isArray(rows) && rows.length > 20) {

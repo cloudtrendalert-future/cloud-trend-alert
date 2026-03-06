@@ -44,10 +44,29 @@ export class BitgetUsdtPerpAdapter {
   constructor({ timeoutMs = 12000 } = {}) {
     this.id = 'bitget';
     this.timeoutMs = timeoutMs;
+    this.universeReady = true;
+    this.supportedSymbols = new Set();
+  }
+
+  canTradeSymbol(unifiedSymbol) {
+    const normalized = normalizeUnifiedSymbol(unifiedSymbol);
+    if (!normalized || !isUsdtSymbol(normalized)) {
+      return false;
+    }
+
+    if (!this.supportedSymbols.size) {
+      return true;
+    }
+
+    return this.supportedSymbols.has(normalized);
   }
 
   async fetchTopSymbols(limit = 100) {
     const rows = await fetchJson(`${BASE_URL}/api/v2/mix/market/tickers?productType=USDT-FUTURES`, this.timeoutMs);
+    this.supportedSymbols = new Set((rows || [])
+      .map((row) => normalizeUnifiedSymbol(row.symbol || row.baseCoin + 'USDT'))
+      .filter((symbol) => isUsdtSymbol(symbol)));
+    this.universeReady = true;
 
     return (rows || [])
       .map((row) => {

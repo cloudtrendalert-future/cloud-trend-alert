@@ -44,10 +44,30 @@ export class BybitUsdtPerpAdapter {
   constructor({ timeoutMs = 12000 } = {}) {
     this.id = 'bybit';
     this.timeoutMs = timeoutMs;
+    this.universeReady = true;
+    this.supportedSymbols = new Set();
+  }
+
+  canTradeSymbol(unifiedSymbol) {
+    const normalized = normalizeUnifiedSymbol(unifiedSymbol);
+    if (!normalized || !isUsdtSymbol(normalized)) {
+      return false;
+    }
+
+    if (!this.supportedSymbols.size) {
+      return true;
+    }
+
+    return this.supportedSymbols.has(normalized);
   }
 
   async fetchTopSymbols(limit = 100) {
     const result = await fetchJson(`${BASE_URL}/v5/market/tickers?category=linear`, this.timeoutMs);
+    this.supportedSymbols = new Set((result.list || [])
+      .map((row) => normalizeUnifiedSymbol(row.symbol))
+      .filter((symbol) => isUsdtSymbol(symbol)));
+    this.universeReady = true;
+
     return (result.list || [])
       .map((row) => {
         const unifiedSymbol = normalizeUnifiedSymbol(row.symbol);

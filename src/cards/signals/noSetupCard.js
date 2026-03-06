@@ -1,15 +1,18 @@
-import { renderCard, section } from '../base/layout.js';
-
 export function noSetupCard(reasons = []) {
+  void reasons;
+
   return {
-    text: renderCard({
-      title: 'No Setup Found',
-      sections: [
-        section('MANUAL SCAN', [
-          'No candidate passed the required filter for this request.',
-          ...reasons.map((reason) => `- ${reason}`)
-        ])
-      ]
-    })
+    text: [
+      '🤖 CLOUD TREND ALERT',
+      '────────────────────',
+      'No Setup Found',
+      '',
+      'No valid setup passed the current scan filters.',
+      'Market structure is not strong enough for a qualified signal right now.',
+      '',
+      'Try scanning again later when conditions become clearer.',
+      '',
+      '⚠️ Not Financial Advice'
+    ].join('\n')
   };
 }
