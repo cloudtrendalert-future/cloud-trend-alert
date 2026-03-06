@@ -211,6 +211,9 @@ export async function bootstrapApp({ dryRun = false } = {}) {
   const delivery = {
     async sendAutoSignal({ candidate, dmUserIds, groupIds, trackPerformance }) {
       const card = autoTop1Card(candidate);
+      if (!card?.text) {
+        return;
+      }
 
       await Promise.all(dmUserIds.map(async (userId) => {
         try {
