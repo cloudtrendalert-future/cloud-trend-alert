@@ -1,5 +1,10 @@
 import cron from 'node-cron';
-import { buildSignalIdentity, buildDedupeKey } from './dedupe.js';
+import {
+  buildSignalIdentity,
+  buildDedupeKey,
+  resolveCooldownMs,
+  getCooldownStatus
+} from './dedupe.js';
 import { isRenderableSignalCandidate } from '../cards/signals/signalCard.js';
 
 const AUTO_EXCHANGE_PRIORITY = Object.freeze(['binance', 'bybit', 'bitget']);
@@ -79,10 +84,24 @@ export class AutoScheduler {
         }
 
         const dedupeKey = buildDedupeKey(signalIdentity);
-        const exists = await this.autoSignalRepo.wasSent(dayUtc, dedupeKey);
-        if (exists) {
-          this.logger.info?.(`[auto] ${exchangeId}: duplicate ${signalIdentity}, continuing`);
+        const lastSentAtUtc = await this.autoSignalRepo.getLastSentAt(dedupeKey);
+        const cooldownMs = resolveCooldownMs(candidate);
+        const cooldownStatus = getCooldownStatus({
+          lastSentAtUtc,
+          cooldownMs,
+          asOfUtc
+        });
+
+        if (cooldownStatus.inCooldown) {
+          const remainingMinutes = Math.ceil(cooldownStatus.remainingMs / 60000);
+          this.logger.info?.(
+            `[auto] ${exchangeId}: duplicate ${signalIdentity} within cooldown (${remainingMinutes}m left), continuing`
+          );
           continue;
+        }
+
+        if (lastSentAtUtc) {
+          this.logger.info?.(`[auto] ${exchangeId}: cooldown expired for ${signalIdentity}, signal allowed`);
         }
 
         const premiumUsers = await this.userRepo.listPremiumUsers();
@@ -103,7 +122,7 @@ export class AutoScheduler {
           trackPerformance
         });
 
-        await this.autoSignalRepo.markSent(dayUtc, dedupeKey);
+        await this.autoSignalRepo.setLastSentAt(dedupeKey, asOfUtc);
         await this.autoSignalRepo.incrementDailySend(dayUtc);
         this.logger.info?.(`[auto] ${exchangeId}: selected ${signalIdentity}; cycle stopped`);
         return;

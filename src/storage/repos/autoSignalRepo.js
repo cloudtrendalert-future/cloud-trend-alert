@@ -3,6 +3,19 @@ export class AutoSignalRepo {
     this.store = store;
   }
 
+  async getLastSentAt(signalIdentity) {
+    const data = await this.store.read();
+    return data.lastSentByIdentity?.[signalIdentity] || null;
+  }
+
+  async setLastSentAt(signalIdentity, sentAtUtc) {
+    await this.store.update((data) => {
+      data.lastSentByIdentity ||= {};
+      data.lastSentByIdentity[signalIdentity] = sentAtUtc;
+      return data;
+    });
+  }
+
   async wasSent(dayUtc, dedupeKey) {
     const data = await this.store.read();
     return Boolean(data.dedupe?.[dayUtc]?.[dedupeKey]);
@@ -37,6 +50,8 @@ export class AutoSignalRepo {
     await this.store.update((data) => {
       const dedupe = {};
       const sendsByDay = {};
+      const lastSentByIdentity = {};
+      const cutoffMs = Date.parse(`${cutoffDayUtc}T00:00:00.000Z`);
 
       Object.entries(data.dedupe || {}).forEach(([day, value]) => {
         if (day >= cutoffDayUtc) {
@@ -50,7 +65,14 @@ export class AutoSignalRepo {
         }
       });
 
-      return { dedupe, sendsByDay };
+      Object.entries(data.lastSentByIdentity || {}).forEach(([identity, sentAtUtc]) => {
+        const sentAtMs = Date.parse(sentAtUtc);
+        if (!Number.isFinite(cutoffMs) || !Number.isFinite(sentAtMs) || sentAtMs >= cutoffMs) {
+          lastSentByIdentity[identity] = sentAtUtc;
+        }
+      });
+
+      return { ...data, dedupe, sendsByDay, lastSentByIdentity };
     });
   }
 }

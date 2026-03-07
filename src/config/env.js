@@ -73,7 +73,7 @@ export const env = {
   cooldownScanPairTfSeconds: Math.max(1, parseIntSafe(process.env.COOLDOWN_SCAN_PAIR_TF_SECONDS, 30)),
   manualScoreThreshold: parseIntSafe(process.env.MANUAL_SCORE_THRESHOLD, 80),
   autoScoreThreshold: parseIntSafe(process.env.AUTO_SCORE_THRESHOLD, 85),
-  autoMaxSendsPerDay: Math.max(1, parseIntSafe(process.env.AUTO_MAX_SENDS_PER_DAY, 5)),
+  autoMaxSendsPerDay: Math.max(1, parseIntSafe(process.env.AUTO_MAX_SENDS_PER_DAY, 24)),
   autoCrons: parseCsv(process.env.AUTO_CRONS || '*/5 * * * *'),
   retentionDays: Math.max(1, parseIntSafe(process.env.RETENTION_DAYS, 60)),
   klinesCacheTtlSeconds: Math.max(10, parseIntSafe(process.env.KLINES_CACHE_TTL_SECONDS, 180)),

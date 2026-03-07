@@ -13,16 +13,35 @@ export class ManualRunner {
   async run({ pair = null, timeframe = null, asOfUtc = new Date().toISOString() } = {}) {
     const universe = await this.universeProvider.fetchMergedTop100();
     const universeSymbols = pair ? [pair] : stageTopSymbols(universe, 100);
+    return this.runPipeline({
+      symbols: universeSymbols,
+      timeframe,
+      asOfUtc
+    });
+  }
 
-    if (!universeSymbols.length) {
+  async runByExchange({ exchangeId, pair = null, timeframe = null, asOfUtc = new Date().toISOString() } = {}) {
+    const universe = pair ? [] : await this.universeProvider.fetchTopByExchange(exchangeId, 100);
+    const universeSymbols = pair ? [pair] : stageTopSymbols(universe, 100);
+    return this.runPipeline({
+      symbols: universeSymbols,
+      timeframe,
+      asOfUtc,
+      exchangeId
+    });
+  }
+
+  async runPipeline({ symbols, timeframe, asOfUtc, exchangeId = null }) {
+    if (!symbols.length) {
       return { top3: [], noSetupReasons: ['Universe is empty.'] };
     }
 
-    const stage1Symbols = universeSymbols.slice(0, 100);
+    const stage1Symbols = symbols.slice(0, 100);
     const stage1 = await evaluateSymbolsStage({
       symbols: stage1Symbols,
       mode: 'FAST',
       timeframes: timeframe ? [timeframe] : undefined,
+      adapterIds: exchangeId ? [exchangeId] : null,
       klinesService: this.klinesService,
       scorer: this.scorer,
       strategies: this.strategies,
@@ -34,6 +53,7 @@ export class ManualRunner {
       symbols: stage2Symbols,
       mode: 'MID',
       timeframes: timeframe ? [timeframe] : undefined,
+      adapterIds: exchangeId ? [exchangeId] : null,
       klinesService: this.klinesService,
       scorer: this.scorer,
       strategies: this.strategies,
@@ -45,6 +65,7 @@ export class ManualRunner {
       symbols: stage3Symbols,
       mode: 'FULL',
       timeframes: timeframe ? [timeframe] : undefined,
+      adapterIds: exchangeId ? [exchangeId] : null,
       klinesService: this.klinesService,
       scorer: this.scorer,
       strategies: this.strategies,
@@ -63,6 +84,7 @@ export class ManualRunner {
       top3: qualified,
       noSetupReasons,
       debug: {
+        exchangeId,
         stage1Count: stage1.length,
         stage2Count: stage2.length,
         stage3Count: stage3.length
