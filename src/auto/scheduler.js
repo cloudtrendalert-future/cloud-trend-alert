@@ -1,5 +1,8 @@
 import cron from 'node-cron';
-import { buildSignalHash, buildDedupeKey } from './dedupe.js';
+import { buildSignalIdentity, buildDedupeKey } from './dedupe.js';
+import { isRenderableSignalCandidate } from '../cards/signals/signalCard.js';
+
+const AUTO_EXCHANGE_PRIORITY = Object.freeze(['binance', 'bybit', 'bitget']);
 
 function utcDay(date = new Date()) {
   return date.toISOString().slice(0, 10);
@@ -49,41 +52,64 @@ export class AutoScheduler {
       const dayUtc = utcDay();
       const sendCount = await this.autoSignalRepo.getDailySendCount(dayUtc);
       if (sendCount >= this.env.autoMaxSendsPerDay) {
+        this.logger.info?.(`[auto] skipped: daily limit reached (${sendCount}/${this.env.autoMaxSendsPerDay})`);
         return;
       }
 
-      const result = await this.autoRunner.run({ asOfUtc: new Date().toISOString() });
-      if (!result.top1) {
+      const asOfUtc = new Date().toISOString();
+      this.logger.info?.(`[auto] cycle started at ${asOfUtc}`);
+
+      for (const exchangeId of AUTO_EXCHANGE_PRIORITY) {
+        const result = await this.autoRunner.runByExchange({ exchangeId, asOfUtc });
+        const candidate = result.top1;
+        if (!candidate) {
+          this.logger.info?.(`[auto] ${exchangeId}: no valid signal`);
+          continue;
+        }
+
+        if (!isRenderableSignalCandidate(candidate)) {
+          this.logger.info?.(`[auto] ${exchangeId}: top candidate not renderable, continuing`);
+          continue;
+        }
+
+        const signalIdentity = buildSignalIdentity(candidate);
+        if (!signalIdentity) {
+          this.logger.info?.(`[auto] ${exchangeId}: top candidate missing identity, continuing`);
+          continue;
+        }
+
+        const dedupeKey = buildDedupeKey(signalIdentity);
+        const exists = await this.autoSignalRepo.wasSent(dayUtc, dedupeKey);
+        if (exists) {
+          this.logger.info?.(`[auto] ${exchangeId}: duplicate ${signalIdentity}, continuing`);
+          continue;
+        }
+
+        const premiumUsers = await this.userRepo.listPremiumUsers();
+        const allUsers = await this.userRepo.getAll();
+        const freeVerifiedUsers = Object.values(allUsers).filter((user) => user.plan === 'free' && user.followVerified);
+        const allowedGroupIds = await this.groupRepo.listAllowedGroupIds();
+
+        const premiumUserIds = premiumUsers.map((user) => Number(user.userId));
+        const dmTargets = [...premiumUsers, ...freeVerifiedUsers]
+          .map((user) => Number(user.userId))
+          .filter((value, index, arr) => arr.indexOf(value) === index);
+        const trackPerformance = premiumUserIds.length > 0 || allowedGroupIds.length > 0;
+
+        await this.delivery.sendAutoSignal({
+          candidate,
+          dmUserIds: dmTargets,
+          groupIds: allowedGroupIds,
+          trackPerformance
+        });
+
+        await this.autoSignalRepo.markSent(dayUtc, dedupeKey);
+        await this.autoSignalRepo.incrementDailySend(dayUtc);
+        this.logger.info?.(`[auto] ${exchangeId}: selected ${signalIdentity}; cycle stopped`);
         return;
       }
 
-      const signalHash = buildSignalHash(result.top1);
-      const dedupeKey = buildDedupeKey(dayUtc, result.top1.symbol, signalHash);
-      const exists = await this.autoSignalRepo.wasSent(dayUtc, dedupeKey);
-      if (exists) {
-        return;
-      }
-
-      await this.autoSignalRepo.markSent(dayUtc, dedupeKey);
-      await this.autoSignalRepo.incrementDailySend(dayUtc);
-
-      const premiumUsers = await this.userRepo.listPremiumUsers();
-      const allUsers = await this.userRepo.getAll();
-      const freeVerifiedUsers = Object.values(allUsers).filter((user) => user.plan === 'free' && user.followVerified);
-      const allowedGroupIds = await this.groupRepo.listAllowedGroupIds();
-
-      const premiumUserIds = premiumUsers.map((user) => Number(user.userId));
-      const dmTargets = [...premiumUsers, ...freeVerifiedUsers]
-        .map((user) => Number(user.userId))
-        .filter((value, index, arr) => arr.indexOf(value) === index);
-      const trackPerformance = premiumUserIds.length > 0 || allowedGroupIds.length > 0;
-
-      await this.delivery.sendAutoSignal({
-        candidate: result.top1,
-        dmUserIds: dmTargets,
-        groupIds: allowedGroupIds,
-        trackPerformance
-      });
+      this.logger.info?.('[auto] cycle ended: no deliverable signal');
     } finally {
       this.running = false;
     }

@@ -9,6 +9,7 @@ export async function evaluateSymbolsStage({
   symbols,
   mode,
   timeframes = TIMEFRAMES,
+  adapterIds = null,
   klinesService,
   scorer,
   strategies,
@@ -17,7 +18,12 @@ export async function evaluateSymbolsStage({
   const results = [];
 
   for (const symbol of symbols) {
-    const klinesByTf = await klinesService.fetchKlinesByTf(symbol, timeframes, 300);
+    const klinesByTf = await klinesService.fetchKlinesByTf(
+      symbol,
+      timeframes,
+      300,
+      { adapterIds }
+    );
     const hasEnoughData = timeframes.every((tf) => (klinesByTf[tf] || []).length >= 40);
     if (!hasEnoughData) {
       continue;

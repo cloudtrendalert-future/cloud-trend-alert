@@ -11,11 +11,37 @@ export class AutoRunner {
 
   async run({ asOfUtc = new Date().toISOString() } = {}) {
     const universe = await this.universeProvider.fetchMergedTop100();
-    const stage1Symbols = stageTopSymbols(universe, 100);
+    const symbols = stageTopSymbols(universe, 100);
+    return this.runPipeline({ symbols, asOfUtc });
+  }
+
+  async runByExchange({ exchangeId, asOfUtc = new Date().toISOString() } = {}) {
+    const universe = await this.universeProvider.fetchTopByExchange(exchangeId, 100);
+    const symbols = stageTopSymbols(universe, 100);
+    return this.runPipeline({
+      symbols,
+      asOfUtc,
+      exchangeId
+    });
+  }
+
+  async runPipeline({ symbols, asOfUtc, exchangeId = null }) {
+    if (!symbols.length) {
+      return {
+        top1: null,
+        debug: {
+          exchangeId,
+          stage1Count: 0,
+          stage2Count: 0,
+          stage3Count: 0
+        }
+      };
+    }
 
     const stage1 = await evaluateSymbolsStage({
-      symbols: stage1Symbols,
+      symbols,
       mode: 'FAST',
+      adapterIds: exchangeId ? [exchangeId] : null,
       klinesService: this.klinesService,
       scorer: this.scorer,
       strategies: this.strategies,
@@ -26,6 +52,7 @@ export class AutoRunner {
     const stage2 = await evaluateSymbolsStage({
       symbols: stage2Symbols,
       mode: 'MID',
+      adapterIds: exchangeId ? [exchangeId] : null,
       klinesService: this.klinesService,
       scorer: this.scorer,
       strategies: this.strategies,
@@ -36,6 +63,7 @@ export class AutoRunner {
     const stage3 = await evaluateSymbolsStage({
       symbols: stage3Symbols,
       mode: 'FULL',
+      adapterIds: exchangeId ? [exchangeId] : null,
       klinesService: this.klinesService,
       scorer: this.scorer,
       strategies: this.strategies,
@@ -46,6 +74,7 @@ export class AutoRunner {
     return {
       top1: best,
       debug: {
+        exchangeId,
         stage1Count: stage1.length,
         stage2Count: stage2.length,
         stage3Count: stage3.length
