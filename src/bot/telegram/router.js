@@ -58,8 +58,9 @@ async function attachPlanState(ctx, deps) {
 }
 
 export function registerRouter(bot, deps) {
+  const logger = deps.logger || console;
   bot.use(detectContext());
-  bot.use(requireGroupAllowed({ env: deps.env, groupRepo: deps.groupRepo }));
+  bot.use(requireGroupAllowed({ env: deps.env, groupRepo: deps.groupRepo, logger }));
 
   bot.on('text', async (ctx, next) => {
     const consumed = await deps.wizardCore.handleText(ctx);
@@ -168,6 +169,9 @@ export function registerRouter(bot, deps) {
 
     if (ctx.state.isFree) {
       if (args.length > 0) {
+        const chatId = Number(ctx.chat?.id || 0);
+        const userId = Number(ctx.from?.id || 0);
+        logger.info?.(`[premium] command=/scan denied reason=premium_required chat=${chatId} user=${userId}`);
         const card = premiumRequiredCard();
         await ctx.reply(card.text);
         return;

@@ -33,6 +33,9 @@ export class ManualRunner {
 
   async runPipeline({ symbols, timeframe, asOfUtc, exchangeId = null }) {
     if (!symbols.length) {
+      this.logger.info?.(
+        `[scan] runner exchange=${exchangeId || 'merged'} stage1=0 stage2=0 stage3=0 qualified=0`
+      );
       return { top3: [], noSetupReasons: ['Universe is empty.'] };
     }
 
@@ -79,6 +82,10 @@ export class ManualRunner {
       noSetupReasons.push(`No setup reached score >= ${this.env.manualScoreThreshold}.`);
       noSetupReasons.push(`Signals found on final stage: ${stage3.length}.`);
     }
+
+    this.logger.info?.(
+      `[scan] runner exchange=${exchangeId || 'merged'} stage1=${stage1.length} stage2=${stage2.length} stage3=${stage3.length} qualified=${qualified.length}`
+    );
 
     return {
       top3: qualified,

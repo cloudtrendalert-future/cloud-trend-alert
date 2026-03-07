@@ -65,10 +65,16 @@ export class AutoScheduler {
       this.logger.info?.(`[auto] cycle started at ${asOfUtc}`);
 
       for (const exchangeId of AUTO_EXCHANGE_PRIORITY) {
+        this.logger.info?.(`[auto] trying exchange=${exchangeId}`);
         const result = await this.autoRunner.runByExchange({ exchangeId, asOfUtc });
         const candidate = result.top1;
+        const stage1Count = result.debug?.stage1Count ?? 0;
+        const stage2Count = result.debug?.stage2Count ?? 0;
+        const stage3Count = result.debug?.stage3Count ?? 0;
         if (!candidate) {
-          this.logger.info?.(`[auto] ${exchangeId}: no valid signal`);
+          this.logger.info?.(
+            `[auto] exchange=${exchangeId} no valid signal stage1=${stage1Count} stage2=${stage2Count} stage3=${stage3Count}`
+          );
           continue;
         }
 
@@ -115,7 +121,7 @@ export class AutoScheduler {
           .filter((value, index, arr) => arr.indexOf(value) === index);
         const trackPerformance = premiumUserIds.length > 0 || allowedGroupIds.length > 0;
 
-        await this.delivery.sendAutoSignal({
+        const deliverySummary = await this.delivery.sendAutoSignal({
           candidate,
           dmUserIds: dmTargets,
           groupIds: allowedGroupIds,
@@ -124,13 +130,19 @@ export class AutoScheduler {
 
         await this.autoSignalRepo.setLastSentAt(dedupeKey, asOfUtc);
         await this.autoSignalRepo.incrementDailySend(dayUtc);
-        this.logger.info?.(`[auto] ${exchangeId}: selected ${signalIdentity}; cycle stopped`);
+        this.logger.info?.(
+          `[auto] delivery dm=${deliverySummary.dmSent}/${deliverySummary.dmTargets} groups=${deliverySummary.groupSent}/${deliverySummary.groupTargets}`
+        );
+        this.logger.info?.(
+          `[auto] exchange=${exchangeId} selected ${signalIdentity} stage1=${stage1Count} stage2=${stage2Count} stage3=${stage3Count}`
+        );
         return;
       }
 
       this.logger.info?.('[auto] cycle ended: no deliverable signal');
     } finally {
       this.running = false;
+      this.logger.info?.('[auto] cycle stopped');
     }
   }
 }

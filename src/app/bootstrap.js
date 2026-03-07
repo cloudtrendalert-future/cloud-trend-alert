@@ -49,6 +49,7 @@ function file(dataDir, name) {
 }
 
 export async function bootstrapApp({ dryRun = false } = {}) {
+  const logger = console;
   const validation = validateEnv();
   if (!validation.ok) {
     throw new Error(`Env validation failed: ${validation.errors.join(', ')}`);
@@ -102,7 +103,8 @@ export async function bootstrapApp({ dryRun = false } = {}) {
     klinesService,
     strategies,
     scorer,
-    env
+    env,
+    logger
   });
 
   const autoRunner = new AutoRunner({
@@ -157,9 +159,9 @@ export async function bootstrapApp({ dryRun = false } = {}) {
   wizardCore.register('pickDate', pickDateWizard);
 
   const commands = {
-    scan: createScanCommand({ manualRunner, tradeMonitor, env }),
-    scanPair: createScanPairCommand({ manualRunner, tradeMonitor }),
-    scanPairTf: createScanPairTfCommand({ manualRunner, tradeMonitor }),
+    scan: createScanCommand({ manualRunner, tradeMonitor, env, logger }),
+    scanPair: createScanPairCommand({ manualRunner, tradeMonitor, logger }),
+    scanPairTf: createScanPairTfCommand({ manualRunner, tradeMonitor, logger }),
     status: createStatusCommand({ dailyAggregator }),
     statusOpen: createStatusOpenCommand({ tradeRepo: repos.tradeRepo }),
     statusClosed: createStatusClosedCommand({ env, tradeRepo: repos.tradeRepo }),
@@ -173,11 +175,12 @@ export async function bootstrapApp({ dryRun = false } = {}) {
     ...repos,
     commands,
     wizardCore,
-    pickDateWizard
+    pickDateWizard,
+    logger
   });
 
-  const dmSender = createDmSender(bot);
-  const groupSender = createGroupSender(bot);
+  const dmSender = createDmSender(bot, { logger });
+  const groupSender = createGroupSender(bot, { logger });
 
   tradeMonitor.onProgress = async ({ trade, event }) => {
     const card = progressUpdateCard({
@@ -191,49 +194,41 @@ export async function bootstrapApp({ dryRun = false } = {}) {
     const premiumUsers = await repos.userRepo.listPremiumUsers();
     const allowedGroupIds = await repos.groupRepo.listAllowedGroupIds();
 
-    await Promise.all(premiumUsers.map(async (user) => {
-      try {
-        await dmSender.sendCard(user.userId, card, { buttons: false });
-      } catch {
-        // ignore blocked DMs
-      }
-    }));
+    await dmSender.sendCardBatch(
+      premiumUsers.map((user) => user.userId),
+      card,
+      { buttons: false, lane: 'progress' }
+    );
 
-    await Promise.all(allowedGroupIds.map(async (groupId) => {
-      try {
-        await groupSender.sendCard(groupId, card);
-      } catch {
-        // ignore send failures
-      }
-    }));
+    await groupSender.sendCardBatch(allowedGroupIds, card, { lane: 'progress' });
   };
 
   const delivery = {
     async sendAutoSignal({ candidate, dmUserIds, groupIds, trackPerformance }) {
       const card = autoTop1Card(candidate);
       if (!card?.text) {
-        return;
+        logger.info?.('[delivery] lane=auto card skipped: empty payload');
+        return {
+          dmTargets: (dmUserIds || []).length,
+          dmSent: 0,
+          groupTargets: (groupIds || []).length,
+          groupSent: 0
+        };
       }
 
-      await Promise.all(dmUserIds.map(async (userId) => {
-        try {
-          await dmSender.sendCard(userId, card, { buttons: false });
-        } catch {
-          // ignore blocked DMs
-        }
-      }));
-
-      await Promise.all(groupIds.map(async (groupId) => {
-        try {
-          await groupSender.sendCard(groupId, card);
-        } catch {
-          // ignore group failures
-        }
-      }));
+      const dmSummary = await dmSender.sendCardBatch(dmUserIds, card, { buttons: false, lane: 'auto' });
+      const groupSummary = await groupSender.sendCardBatch(groupIds, card, { lane: 'auto' });
 
       if (trackPerformance) {
         await tradeMonitor.onSignalIssued(candidate);
       }
+
+      return {
+        dmTargets: dmSummary.targets,
+        dmSent: dmSummary.sent,
+        groupTargets: groupSummary.targets,
+        groupSent: groupSummary.sent
+      };
     }
   };
 
@@ -243,7 +238,8 @@ export async function bootstrapApp({ dryRun = false } = {}) {
     autoSignalRepo: repos.autoSignalRepo,
     delivery,
     userRepo: repos.userRepo,
-    groupRepo: repos.groupRepo
+    groupRepo: repos.groupRepo,
+    logger
   });
 
   await retentionService.run();
