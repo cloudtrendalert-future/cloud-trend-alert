@@ -36,7 +36,7 @@ export class ManualRunner {
       this.logger.info?.(
         `[scan] runner exchange=${exchangeId || 'merged'} stage1=0 stage2=0 stage3=0 qualified=0`
       );
-      return { top3: [], noSetupReasons: ['Universe is empty.'] };
+      return { top3: [], candidates: [], noSetupReasons: ['Universe is empty.'] };
     }
 
     const stage1Symbols = symbols.slice(0, 100);
@@ -75,7 +75,7 @@ export class ManualRunner {
       asOfUtc
     });
 
-    const qualified = stage3.filter((row) => row.scoring.scoreFinal >= this.env.manualScoreThreshold).slice(0, 3);
+    const qualified = stage3.filter((row) => row.scoring.scoreFinal >= this.env.manualScoreThreshold);
 
     const noSetupReasons = [];
     if (!qualified.length) {
@@ -88,7 +88,8 @@ export class ManualRunner {
     );
 
     return {
-      top3: qualified,
+      top3: qualified.slice(0, 3),
+      candidates: qualified,
       noSetupReasons,
       debug: {
         exchangeId,

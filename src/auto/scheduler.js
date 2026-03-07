@@ -6,8 +6,8 @@ import {
   getCooldownStatus
 } from './dedupe.js';
 import { isRenderableSignalCandidate } from '../cards/signals/signalCard.js';
-
-const AUTO_EXCHANGE_PRIORITY = Object.freeze(['binance', 'bybit', 'bitget']);
+import { EXCHANGES } from '../config/constants.js';
+import { mergeAndDedupeCandidates } from '../funnel/candidateMerge.js';
 
 function utcDay(date = new Date()) {
   return date.toISOString().slice(0, 10);
@@ -64,34 +64,48 @@ export class AutoScheduler {
       const asOfUtc = new Date().toISOString();
       this.logger.info?.(`[auto] cycle started at ${asOfUtc}`);
 
-      for (const exchangeId of AUTO_EXCHANGE_PRIORITY) {
-        this.logger.info?.(`[auto] trying exchange=${exchangeId}`);
+      const mergedCandidates = [];
+      for (const exchangeId of EXCHANGES) {
+        this.logger.info?.(`[auto] pass start exchange=${exchangeId}`);
         const result = await this.autoRunner.runByExchange({ exchangeId, asOfUtc });
-        const candidate = result.top1;
         const stage1Count = result.debug?.stage1Count ?? 0;
         const stage2Count = result.debug?.stage2Count ?? 0;
         const stage3Count = result.debug?.stage3Count ?? 0;
-        if (!candidate) {
-          this.logger.info?.(
-            `[auto] exchange=${exchangeId} no valid signal stage1=${stage1Count} stage2=${stage2Count} stage3=${stage3Count}`
-          );
+        const rawCandidates = Array.isArray(result.candidates)
+          ? result.candidates
+          : (result.top1 ? [result.top1] : []);
+        const exchangeCandidates = rawCandidates.map((candidate) => ({ ...candidate, exchangeId }));
+        mergedCandidates.push(...exchangeCandidates);
+
+        this.logger.info?.(
+          `[auto] pass done exchange=${exchangeId} stage1=${stage1Count} stage2=${stage2Count} stage3=${stage3Count} qualified=${rawCandidates.length}`
+        );
+      }
+
+      const merged = mergeAndDedupeCandidates(mergedCandidates);
+      this.logger.info?.(
+        `[auto] aggregate exchanges=${EXCHANGES.join(',')} merged=${merged.mergedCount} deduped=${merged.dedupedCount} ranked=${merged.ranked.length}`
+      );
+
+      let candidate = null;
+      let signalIdentity = '';
+      let dedupeKey = '';
+
+      for (const rankedCandidate of merged.ranked) {
+        if (!isRenderableSignalCandidate(rankedCandidate)) {
+          this.logger.info?.('[auto] ranked candidate not renderable, continuing');
           continue;
         }
 
-        if (!isRenderableSignalCandidate(candidate)) {
-          this.logger.info?.(`[auto] ${exchangeId}: top candidate not renderable, continuing`);
-          continue;
-        }
-
-        const signalIdentity = buildSignalIdentity(candidate);
+        signalIdentity = buildSignalIdentity(rankedCandidate);
         if (!signalIdentity) {
-          this.logger.info?.(`[auto] ${exchangeId}: top candidate missing identity, continuing`);
+          this.logger.info?.('[auto] ranked candidate missing identity, continuing');
           continue;
         }
 
-        const dedupeKey = buildDedupeKey(signalIdentity);
+        dedupeKey = buildDedupeKey(signalIdentity);
         const lastSentAtUtc = await this.autoSignalRepo.getLastSentAt(dedupeKey);
-        const cooldownMs = resolveCooldownMs(candidate);
+        const cooldownMs = resolveCooldownMs(rankedCandidate);
         const cooldownStatus = getCooldownStatus({
           lastSentAtUtc,
           cooldownMs,
@@ -101,45 +115,52 @@ export class AutoScheduler {
         if (cooldownStatus.inCooldown) {
           const remainingMinutes = Math.ceil(cooldownStatus.remainingMs / 60000);
           this.logger.info?.(
-            `[auto] ${exchangeId}: duplicate ${signalIdentity} within cooldown (${remainingMinutes}m left), continuing`
+            `[auto] duplicate ${signalIdentity} within cooldown (${remainingMinutes}m left), continuing`
           );
           continue;
         }
 
         if (lastSentAtUtc) {
-          this.logger.info?.(`[auto] ${exchangeId}: cooldown expired for ${signalIdentity}, signal allowed`);
+          this.logger.info?.(`[auto] cooldown expired for ${signalIdentity}, signal allowed`);
         }
 
-        const premiumUsers = await this.userRepo.listPremiumUsers();
-        const allUsers = await this.userRepo.getAll();
-        const freeVerifiedUsers = Object.values(allUsers).filter((user) => user.plan === 'free' && user.followVerified);
-        const allowedGroupIds = await this.groupRepo.listAllowedGroupIds();
+        candidate = rankedCandidate;
+        break;
+      }
 
-        const premiumUserIds = premiumUsers.map((user) => Number(user.userId));
-        const dmTargets = [...premiumUsers, ...freeVerifiedUsers]
-          .map((user) => Number(user.userId))
-          .filter((value, index, arr) => arr.indexOf(value) === index);
-        const trackPerformance = premiumUserIds.length > 0 || allowedGroupIds.length > 0;
-
-        const deliverySummary = await this.delivery.sendAutoSignal({
-          candidate,
-          dmUserIds: dmTargets,
-          groupIds: allowedGroupIds,
-          trackPerformance
-        });
-
-        await this.autoSignalRepo.setLastSentAt(dedupeKey, asOfUtc);
-        await this.autoSignalRepo.incrementDailySend(dayUtc);
+      if (!candidate) {
         this.logger.info?.(
-          `[auto] delivery dm=${deliverySummary.dmSent}/${deliverySummary.dmTargets} groups=${deliverySummary.groupSent}/${deliverySummary.groupTargets}`
-        );
-        this.logger.info?.(
-          `[auto] exchange=${exchangeId} selected ${signalIdentity} stage1=${stage1Count} stage2=${stage2Count} stage3=${stage3Count}`
+          `[auto] cycle ended: no deliverable signal exchanges=${EXCHANGES.join(',')} merged=${merged.mergedCount} deduped=${merged.dedupedCount} selected=0`
         );
         return;
       }
 
-      this.logger.info?.('[auto] cycle ended: no deliverable signal');
+      const premiumUsers = await this.userRepo.listPremiumUsers();
+      const allUsers = await this.userRepo.getAll();
+      const freeVerifiedUsers = Object.values(allUsers).filter((user) => user.plan === 'free' && user.followVerified);
+      const allowedGroupIds = await this.groupRepo.listAllowedGroupIds();
+
+      const premiumUserIds = premiumUsers.map((user) => Number(user.userId));
+      const dmTargets = [...premiumUsers, ...freeVerifiedUsers]
+        .map((user) => Number(user.userId))
+        .filter((value, index, arr) => arr.indexOf(value) === index);
+      const trackPerformance = premiumUserIds.length > 0 || allowedGroupIds.length > 0;
+
+      const deliverySummary = await this.delivery.sendAutoSignal({
+        candidate,
+        dmUserIds: dmTargets,
+        groupIds: allowedGroupIds,
+        trackPerformance
+      });
+
+      await this.autoSignalRepo.setLastSentAt(dedupeKey, asOfUtc);
+      await this.autoSignalRepo.incrementDailySend(dayUtc);
+      this.logger.info?.(
+        `[auto] delivery dm=${deliverySummary.dmSent}/${deliverySummary.dmTargets} groups=${deliverySummary.groupSent}/${deliverySummary.groupTargets}`
+      );
+      this.logger.info?.(
+        `[auto] top1 selected identity=${signalIdentity} exchange=${candidate.exchangeId || 'unknown'} selected=1`
+      );
     } finally {
       this.running = false;
       this.logger.info?.('[auto] cycle stopped');

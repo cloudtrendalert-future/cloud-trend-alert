@@ -29,6 +29,7 @@ export class AutoRunner {
     if (!symbols.length) {
       return {
         top1: null,
+        candidates: [],
         debug: {
           exchangeId,
           stage1Count: 0,
@@ -70,9 +71,11 @@ export class AutoRunner {
       asOfUtc
     });
 
-    const best = stage3.find((row) => row.scoring.scoreFinal > this.env.autoScoreThreshold) || null;
+    const qualified = stage3.filter((row) => row.scoring.scoreFinal > this.env.autoScoreThreshold);
+    const best = qualified[0] || null;
     return {
       top1: best,
+      candidates: qualified,
       debug: {
         exchangeId,
         stage1Count: stage1.length,
