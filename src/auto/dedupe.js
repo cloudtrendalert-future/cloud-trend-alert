@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { normalizeUnifiedSymbol } from '../exchanges/symbol/normalize.js';
+import { buildSignalIdentity, buildDedupeKey } from '../signals/identity.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_COOLDOWN_MS = 6 * HOUR_MS;
@@ -22,35 +22,11 @@ export function buildSignalHash(candidate) {
   return createHash('sha1').update(base).digest('hex').slice(0, 16);
 }
 
-function normalizeDirection(direction) {
-  const value = String(direction || '').toUpperCase();
-  if (value === 'SHORT') {
-    return 'SHORT';
-  }
-  if (value === 'LONG') {
-    return 'LONG';
-  }
-  return '';
-}
-
 function normalizeTimeframe(timeframe) {
   return String(timeframe || '').trim().toLowerCase();
 }
 
-export function buildSignalIdentity(candidate) {
-  const symbol = normalizeUnifiedSymbol(candidate?.symbol || '');
-  const direction = normalizeDirection(candidate?.signal?.direction);
-  const timeframe = normalizeTimeframe(candidate?.signal?.timeframe);
-  if (!symbol || !direction || !timeframe) {
-    return '';
-  }
-
-  return `${symbol}|${direction}|${timeframe}`;
-}
-
-export function buildDedupeKey(signalIdentity) {
-  return String(signalIdentity || '').trim();
-}
+export { buildSignalIdentity, buildDedupeKey };
 
 export function resolveCooldownMs(candidate) {
   const timeframe = normalizeTimeframe(candidate?.signal?.timeframe);

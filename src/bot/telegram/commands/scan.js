@@ -1,6 +1,5 @@
-import { manualTop3Card } from '../../../cards/signals/manualTop3Card.js';
 import { noSetupCard } from '../../../cards/signals/noSetupCard.js';
-import { isRenderableSignalCandidate } from '../../../cards/signals/signalCard.js';
+import { isRenderableSignalCandidate, signalCard } from '../../../cards/signals/signalCard.js';
 import { EXCHANGES } from '../../../config/constants.js';
 import { mergeAndDedupeCandidates } from '../../../funnel/candidateMerge.js';
 
@@ -18,13 +17,13 @@ function getChatContext(ctx) {
   return { chatId, userId, groupTitle };
 }
 
-export function createScanCommand({ manualRunner, tradeMonitor, env, logger = console }) {
+export function createScanCommand({ manualRunner, manualRecentSignalService, tradeMonitor, env, logger = console }) {
   return async (ctx) => {
     const lane = getLane(ctx);
     const { chatId, userId, groupTitle } = getChatContext(ctx);
     const asOfUtc = new Date().toISOString();
-    let validCandidates = [];
-    let cards = [];
+    let reservedIdentities = [];
+    let sentCandidates = [];
     let noSetupReasons = [];
     const exchangeIds = EXCHANGES;
 
@@ -53,22 +52,27 @@ export function createScanCommand({ manualRunner, tradeMonitor, env, logger = co
       }
 
       const merged = mergeAndDedupeCandidates(mergedCandidates);
-      validCandidates = merged.ranked.slice(0, 3);
-      cards = manualTop3Card(validCandidates, {
-        asOfUtc,
-        threshold: env.manualScoreThreshold
-      }).slice(0, 3);
+      const rankedCandidates = merged.ranked.filter((candidate) => isRenderableSignalCandidate(candidate));
+      const eligibility = await manualRecentSignalService.pickTopEligible(rankedCandidates, 3, { asOfUtc });
+      const selectedEntries = eligibility.selected || [];
+      reservedIdentities = selectedEntries.map((entry) => entry.signalIdentity).filter(Boolean);
+
+      const skippedCooldownCount = eligibility.skipped.filter((item) => item.reason === 'cooldown').length;
+      const skippedInFlightCount = eligibility.skipped.filter((item) => item.reason === 'in_flight').length;
+
       noSetupReasons = [
         `No setup reached score >= ${env.manualScoreThreshold} across Binance, Bybit, and Bitget.`,
         `Merged valid candidates: ${merged.mergedCount}.`,
-        `After cross-exchange dedupe: ${merged.dedupedCount}.`
+        `After cross-exchange dedupe: ${merged.dedupedCount}.`,
+        `Skipped by recent manual cooldown: ${skippedCooldownCount}.`,
+        `Skipped by active manual request: ${skippedInFlightCount}.`
       ];
 
       logger.info?.(
-        `[scan] aggregate lane=${lane} exchanges=${exchangeIds.join(',')} merged=${merged.mergedCount} deduped=${merged.dedupedCount} selected=${cards.length}`
+        `[scan] aggregate lane=${lane} exchanges=${exchangeIds.join(',')} merged=${merged.mergedCount} deduped=${merged.dedupedCount} fresh=${selectedEntries.length} skipped_recent=${skippedCooldownCount}`
       );
 
-      if (!cards.length) {
+      if (!selectedEntries.length) {
         const card = noSetupCard(noSetupReasons);
         await ctx.reply(card.text);
         if (lane === 'free') {
@@ -87,30 +91,46 @@ export function createScanCommand({ manualRunner, tradeMonitor, env, logger = co
         return;
       }
 
-      for (const card of cards) {
+      for (const entry of selectedEntries) {
+        const card = signalCard(entry.candidate);
+        if (!card?.text) {
+          manualRecentSignalService.releaseReservation(entry.signalIdentity);
+          reservedIdentities = reservedIdentities.filter((identity) => identity !== entry.signalIdentity);
+          continue;
+        }
+
         await ctx.reply(card.text);
+        await manualRecentSignalService.markSent(entry.signalIdentity, new Date().toISOString());
+        reservedIdentities = reservedIdentities.filter((identity) => identity !== entry.signalIdentity);
+        sentCandidates.push(entry.candidate);
+
+        if (ctx.state.enablePerformance) {
+          await tradeMonitor.onSignalIssued(entry.candidate);
+        }
+      }
+
+      if (!sentCandidates.length) {
+        const card = noSetupCard(noSetupReasons);
+        await ctx.reply(card.text);
+        logger.info?.('[scan] stage final_selected count=0 reason=no_renderable_cards');
+        return;
       }
 
       if (lane === 'free') {
         logger.info?.(
-          `[scan] outcome lane=free sent=${cards.length} exchanges=${exchangeIds.join(',')} chat=${chatId} user=${userId}`
+          `[scan] outcome lane=free sent=${sentCandidates.length} exchanges=${exchangeIds.join(',')} chat=${chatId} user=${userId}`
         );
       } else if (lane === 'group') {
         logger.info?.(
-          `[group] command=/scan outcome=sent cards=${cards.length} exchanges=${exchangeIds.join(',')} groupId=${chatId}`
+          `[group] command=/scan outcome=sent cards=${sentCandidates.length} exchanges=${exchangeIds.join(',')} groupId=${chatId}`
         );
       } else {
         logger.info?.(
-          `[premium] command=/scan outcome=sent cards=${cards.length} exchanges=${exchangeIds.join(',')} chat=${chatId} user=${userId}`
+          `[premium] command=/scan outcome=sent cards=${sentCandidates.length} exchanges=${exchangeIds.join(',')} chat=${chatId} user=${userId}`
         );
       }
-
-      if (ctx.state.enablePerformance) {
-        for (const candidate of validCandidates) {
-          await tradeMonitor.onSignalIssued(candidate);
-        }
-      }
     } catch (error) {
+      manualRecentSignalService.releaseReservations(reservedIdentities);
       const errorMessage = error?.message || String(error);
       if (lane === 'free') {
         logger.error?.(`[scan] request failed chat=${chatId} user=${userId} error=${errorMessage}`);

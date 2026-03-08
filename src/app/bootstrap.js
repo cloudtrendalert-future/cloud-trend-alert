@@ -10,6 +10,7 @@ import { SessionRepo } from '../storage/repos/sessionRepo.js';
 import { TradeRepo } from '../storage/repos/tradeRepo.js';
 import { DailyStatsRepo } from '../storage/repos/dailyStatsRepo.js';
 import { AutoSignalRepo } from '../storage/repos/autoSignalRepo.js';
+import { ManualRecentSignalRepo } from '../storage/repos/manualRecentSignalRepo.js';
 import { StateRepo } from '../storage/repos/stateRepo.js';
 import { BinanceUsdmAdapter } from '../exchanges/adapters/binanceUsdm.js';
 import { BybitUsdtPerpAdapter } from '../exchanges/adapters/bybitUsdtPerp.js';
@@ -43,6 +44,7 @@ import { createDmSender } from '../bot/telegram/delivery/sendDm.js';
 import { createGroupSender } from '../bot/telegram/delivery/sendGroups.js';
 import { autoTop1Card } from '../cards/signals/autoTop1Card.js';
 import { progressUpdateCard } from '../cards/signals/progressUpdateCard.js';
+import { ManualRecentSignalService } from '../manual/recentSignalService.js';
 
 function file(dataDir, name) {
   return path.join(dataDir, name);
@@ -64,6 +66,7 @@ export async function bootstrapApp({ dryRun = false } = {}) {
     trades: new JsonStore(file(env.dataDir, 'trades.json'), {}),
     dailyStats: new JsonStore(file(env.dataDir, 'daily-stats.json'), {}),
     autoSignals: new JsonStore(file(env.dataDir, 'auto-signals.json'), {}),
+    manualRecentSignals: new JsonStore(file(env.dataDir, 'manual-recent-signals.json'), { lastSentByIdentity: {} }),
     state: new JsonStore(file(env.dataDir, 'state.json'), {})
   };
 
@@ -76,8 +79,13 @@ export async function bootstrapApp({ dryRun = false } = {}) {
     tradeRepo: new TradeRepo(stores.trades),
     dailyStatsRepo: new DailyStatsRepo(stores.dailyStats),
     autoSignalRepo: new AutoSignalRepo(stores.autoSignals),
+    manualRecentSignalRepo: new ManualRecentSignalRepo(stores.manualRecentSignals),
     stateRepo: new StateRepo(stores.state)
   };
+
+  const manualRecentSignalService = new ManualRecentSignalService({
+    repo: repos.manualRecentSignalRepo
+  });
 
   await Promise.all(env.premiumUserIds.map((userId) => repos.userRepo.upsertUser(userId, { plan: 'premium' })));
   await Promise.all(env.allowedGroupIds.map((groupId) => repos.groupRepo.setAllowed(groupId, true)));
@@ -143,6 +151,7 @@ export async function bootstrapApp({ dryRun = false } = {}) {
         klinesService,
         manualRunner,
         autoRunner,
+        manualRecentSignalService,
         dailyAggregator,
         tradeMonitor,
         retentionService
@@ -159,7 +168,7 @@ export async function bootstrapApp({ dryRun = false } = {}) {
   wizardCore.register('pickDate', pickDateWizard);
 
   const commands = {
-    scan: createScanCommand({ manualRunner, tradeMonitor, env, logger }),
+    scan: createScanCommand({ manualRunner, manualRecentSignalService, tradeMonitor, env, logger }),
     scanPair: createScanPairCommand({ manualRunner, tradeMonitor, logger }),
     scanPairTf: createScanPairTfCommand({ manualRunner, tradeMonitor, logger }),
     status: createStatusCommand({ dailyAggregator }),

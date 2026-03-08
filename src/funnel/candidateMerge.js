@@ -1,4 +1,4 @@
-import { buildSignalIdentity } from '../auto/dedupe.js';
+import { buildSignalIdentity, canonicalizeCandidateIdentity } from '../signals/identity.js';
 
 function toScore(candidate) {
   const value = Number(candidate?.scoring?.scoreFinal);
@@ -13,15 +13,29 @@ export function rankCandidates(candidates = []) {
   return [...candidates].sort(compareCandidatesByScoreDesc);
 }
 
-export function mergeAndDedupeCandidates(candidates = []) {
-  const merged = Array.isArray(candidates)
+export function mergeCandidates(candidates = []) {
+  return Array.isArray(candidates)
     ? candidates.filter(Boolean)
     : [];
+}
+
+export function canonicalizeCandidates(candidates = []) {
+  const merged = mergeCandidates(candidates);
+  const canonicalized = merged.map((candidate) => canonicalizeCandidateIdentity(candidate));
+  return {
+    mergedCount: merged.length,
+    canonicalizedCount: canonicalized.length,
+    candidates: canonicalized
+  };
+}
+
+export function dedupeCandidatesByIdentity(candidates = []) {
+  const source = mergeCandidates(candidates);
 
   const dedupedByIdentity = new Map();
   const identityMissing = [];
 
-  for (const candidate of merged) {
+  for (const candidate of source) {
     const identity = buildSignalIdentity(candidate);
     if (!identity) {
       identityMissing.push(candidate);
@@ -40,8 +54,22 @@ export function mergeAndDedupeCandidates(candidates = []) {
   ];
 
   return {
-    mergedCount: merged.length,
+    sourceCount: source.length,
     dedupedCount: deduped.length,
+    identityMissingCount: identityMissing.length,
+    candidates: deduped,
     ranked: rankCandidates(deduped)
+  };
+}
+
+export function mergeAndDedupeCandidates(candidates = []) {
+  const canonical = canonicalizeCandidates(candidates);
+  const deduped = dedupeCandidatesByIdentity(canonical.candidates);
+  return {
+    mergedCount: canonical.mergedCount,
+    canonicalizedCount: canonical.canonicalizedCount,
+    dedupedCount: deduped.dedupedCount,
+    identityMissingCount: deduped.identityMissingCount,
+    ranked: deduped.ranked
   };
 }

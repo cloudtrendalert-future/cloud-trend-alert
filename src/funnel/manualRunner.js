@@ -1,5 +1,9 @@
 import { stageTopSymbols, evaluateSymbolsStage } from './stages.js';
 
+const STAGE1_SYMBOL_LIMIT = 100;
+const STAGE2_SYMBOL_LIMIT = 60;
+const STAGE3_SYMBOL_LIMIT = 20;
+
 export class ManualRunner {
   constructor({ universeProvider, klinesService, strategies, scorer, env, logger = console }) {
     this.universeProvider = universeProvider;
@@ -12,7 +16,7 @@ export class ManualRunner {
 
   async run({ pair = null, timeframe = null, asOfUtc = new Date().toISOString() } = {}) {
     const universe = await this.universeProvider.fetchMergedTop100();
-    const universeSymbols = pair ? [pair] : stageTopSymbols(universe, 100);
+    const universeSymbols = pair ? [pair] : stageTopSymbols(universe, STAGE1_SYMBOL_LIMIT);
     return this.runPipeline({
       symbols: universeSymbols,
       timeframe,
@@ -21,8 +25,8 @@ export class ManualRunner {
   }
 
   async runByExchange({ exchangeId, pair = null, timeframe = null, asOfUtc = new Date().toISOString() } = {}) {
-    const universe = pair ? [] : await this.universeProvider.fetchTopByExchange(exchangeId, 100);
-    const universeSymbols = pair ? [pair] : stageTopSymbols(universe, 100);
+    const universe = pair ? [] : await this.universeProvider.fetchTopByExchange(exchangeId, STAGE1_SYMBOL_LIMIT);
+    const universeSymbols = pair ? [pair] : stageTopSymbols(universe, STAGE1_SYMBOL_LIMIT);
     return this.runPipeline({
       symbols: universeSymbols,
       timeframe,
@@ -39,7 +43,7 @@ export class ManualRunner {
       return { top3: [], candidates: [], noSetupReasons: ['Universe is empty.'] };
     }
 
-    const stage1Symbols = symbols.slice(0, 100);
+    const stage1Symbols = symbols.slice(0, STAGE1_SYMBOL_LIMIT);
     const stage1 = await evaluateSymbolsStage({
       symbols: stage1Symbols,
       mode: 'FAST',
@@ -51,7 +55,7 @@ export class ManualRunner {
       asOfUtc
     });
 
-    const stage2Symbols = stage1.slice(0, 50).map((row) => row.symbol);
+    const stage2Symbols = stage1.slice(0, STAGE2_SYMBOL_LIMIT).map((row) => row.symbol);
     const stage2 = await evaluateSymbolsStage({
       symbols: stage2Symbols,
       mode: 'MID',
@@ -63,7 +67,7 @@ export class ManualRunner {
       asOfUtc
     });
 
-    const stage3Symbols = stage2.slice(0, 10).map((row) => row.symbol);
+    const stage3Symbols = stage2.slice(0, STAGE3_SYMBOL_LIMIT).map((row) => row.symbol);
     const stage3 = await evaluateSymbolsStage({
       symbols: stage3Symbols,
       mode: 'FULL',
